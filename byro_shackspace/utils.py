@@ -29,7 +29,7 @@ def process_bank_csv(sender, signal, **kwargs):
         if not line:
             continue
         reference = ''
-        for key in line.keys():
+        for key in reader.fieldnames:
             if key.startswith('VWZ'):
                 reference += line[key] + ' '
 

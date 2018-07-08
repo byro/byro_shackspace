@@ -64,7 +64,7 @@ def match_transaction(sender, signal, **kwargs):
     }
     virtual_transaction = VirtualTransaction.objects.filter(**data).first()
     if virtual_transaction and virtual_transaction.real_transaction != transaction:
-        raise Exception(f'RealTransaction {transaction.id} cannot be matched! There is already a VirtualTransaction ({virtual_transaction.id}) that is too similar. It is matched to RealTransaction {virtual_transaction.real_transaction.id}.')
+        raise Exception('RealTransaction {transaction.id} cannot be matched! There is already a VirtualTransaction ({virtual_transaction.id}) that is too similar. It is matched to RealTransaction {virtual_transaction.real_transaction.id}.'.format(transaction=transaction, virtual_transaction=virtual_transaction))
     if not virtual_transaction:
         data['real_transaction'] = transaction
         virtual_transaction = VirtualTransaction.objects.create(**data)

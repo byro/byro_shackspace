@@ -4,17 +4,16 @@ import re
 from datetime import datetime
 from decimal import Decimal
 
+from django.conf import settings
 from django.dispatch import receiver
 from django.utils.timezone import now
-from django.conf import settings
 
 from byro.bookkeeping.models import (
-    Account, AccountCategory, RealTransaction,
-    TransactionChannel, VirtualTransaction,
+    Account, AccountCategory, Booking, Transaction,
 )
-from byro.bookkeeping.signals import (
-    derive_virtual_transactions, process_csv_upload,
-)
+from byro.bookkeeping.signals import process_csv_upload, process_transaction
+from byro.bookkeeping.special_accounts import SpecialAccounts
+from byro.common.models import Configuration
 from byro.members.models import Member
 
 
@@ -24,6 +23,7 @@ def process_bank_csv(sender, signal, **kwargs):
     filename = os.path.join(settings.MEDIA_ROOT, source.source_file.name)
     reader = csv.DictReader(open(filename, encoding='iso-8859-1'), delimiter=';', quotechar='"')
     booking_timestamp = now()
+    account = SpecialAccounts.bank
 
     for line in reader:
         if not line:
@@ -33,45 +33,80 @@ def process_bank_csv(sender, signal, **kwargs):
             if key.startswith('VWZ'):
                 reference += line[key] + ' '
 
-        RealTransaction.objects.get_or_create(
-            channel=TransactionChannel.BANK,
-            value_datetime=datetime.strptime(line.get('Buchungstag'), '%d.%m.%Y'),
-            amount=Decimal(line.get('Betrag').replace('.', '').replace(',', '.')),
-            purpose=reference,
-            originator=line.get('Auftraggeber/Empfänger', '<leer>'),
+        amount = Decimal(line.get('Betrag').replace('.', '').replace(',', '.'))
+        if amount < 0:
+            amount = -amount
+            booking_type = 'c'
+        else:
+            booking_type = 'd'
+
+        params = dict(
+            memo=reference,
+            amount=amount,
             importer='shack_bank_csv_importer',
-            defaults={'source': source, 'booking_datetime': booking_timestamp, 'data': line},
         )
+        data = {
+            'csv_line': line,
+            'other_party': "{}".format(line.get('Auftraggeber/Empfänger', '<leer>')),
+        }
+
+        if booking_type == 'c':
+            params['credit_account'] = account
+        else:
+            params['debit_account'] = account
+
+        booking = account.bookings.filter(
+            transaction__value_datetime=datetime.strptime(line.get('Buchungstag'), '%d.%m.%Y'),
+            **params
+        ).first()
+
+        if not booking:
+            t = Transaction.objects.create(
+                value_datetime=datetime.strptime(line.get('Buchungstag'), '%d.%m.%Y'),
+            )
+            Booking.objects.create(
+                transaction=t,
+                booking_datetime=booking_timestamp,
+                source=source,
+                data=data,
+                **params
+            )
     return True
 
 
-@receiver(derive_virtual_transactions)
+@receiver(process_transaction)
 def match_transaction(sender, signal, **kwargs):
     transaction = sender
-    uid, score = reference_parser(reference=transaction.purpose)
+    if transaction.is_read_only:
+        return False
+    if transaction.is_balanced:
+        return False
+
+    uid, score = reference_parser(reference=transaction.find_memo())
     member = None
     try:
         member = Member.objects.get(number=uid)
     except Member.DoesNotExist:
-        return
+        return False
 
-    account = Account.objects.get(account_category=AccountCategory.MEMBER_FEES)
+    balances = transaction.balances
     data = {
-        'amount': transaction.amount,
-        'destination_account': account,
-        'value_datetime': transaction.value_datetime,
+        'amount': abs(balances['debit'] - balances['credit']),
+        'account': SpecialAccounts.fees_receivable,
         'member': member,
     }
-    virtual_transaction = VirtualTransaction.objects.filter(**data).first()
-    if virtual_transaction and virtual_transaction.real_transaction != transaction:
-        raise Exception('RealTransaction {transaction.id} cannot be matched! There is already a VirtualTransaction ({virtual_transaction.id}) that is too similar. It is matched to RealTransaction {virtual_transaction.real_transaction.id}.'.format(transaction=transaction, virtual_transaction=virtual_transaction))
-    if not virtual_transaction:
-        data['real_transaction'] = transaction
-        virtual_transaction = VirtualTransaction.objects.create(**data)
-    return [virtual_transaction]
+
+    if balances['debit'] > balances['credit']:
+        transaction.credit(**data)
+    else:
+        transaction.debit(**data)
+
+    return True
 
 
 def reference_parser(reference):
+    if not reference:
+        return (False, 99)
     reference = reference.lower()
 
     regexes = (

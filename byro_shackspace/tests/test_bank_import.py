@@ -24,18 +24,18 @@ def bank_transaction_csv_file():
 
 @pytest.mark.django_db
 def test_bank_import(bank_transaction_csv_file):
-    assert bank_transaction_csv_file.transactions.count() == 0
+    assert bank_transaction_csv_file.bookings.count() == 0
     process_bank_csv(bank_transaction_csv_file, None)
     bank_transaction_csv_file.refresh_from_db()
-    assert bank_transaction_csv_file.transactions.count() == 6
+    assert bank_transaction_csv_file.bookings.count() == 6
 
 
 @pytest.mark.django_db
 def test_bank_import_no_duplicates(bank_transaction_csv_file):
-    assert bank_transaction_csv_file.transactions.count() == 0
+    assert bank_transaction_csv_file.bookings.count() == 0
     process_bank_csv(bank_transaction_csv_file, None)
     bank_transaction_csv_file.refresh_from_db()
-    assert bank_transaction_csv_file.transactions.count() == 6
+    assert bank_transaction_csv_file.bookings.count() == 6
     process_bank_csv(bank_transaction_csv_file, None)
     bank_transaction_csv_file.refresh_from_db()
-    assert bank_transaction_csv_file.transactions.count() == 6
+    assert bank_transaction_csv_file.bookings.count() == 6

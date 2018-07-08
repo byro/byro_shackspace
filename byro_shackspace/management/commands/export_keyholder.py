@@ -1,10 +1,10 @@
-from django.db.models import Q
+from os import path
+
 from django.conf import settings
 from django.core.management import BaseCommand
+from django.db.models import Q
 from django.template.loader import get_template
 from django.utils import timezone
-
-from os import path
 
 
 class Command(BaseCommand):
@@ -34,4 +34,3 @@ class Command(BaseCommand):
 
             with open(path.join(settings.BASE_DIR, f'authorized_keys.{task}'), 'w') as f:
                 f.write(content)
-
